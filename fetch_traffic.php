@@ -119,71 +119,51 @@ foreach($portNames as $oid => $val) {
     
    // Traffic Calculation
    
+$mbps = 0.00;
 
-// ============================================================
-// FIXED TRAFFIC CALCULATION - ACCURATE Mbps & Gbps
-// ============================================================
-
-$traffic_mbps = 0.00;
-$traffic_gbps = 0.00;
-$traffic_kbps = 0.00;
-
-// Get current IN octets (bytes)
 if (isset($portInOctets[$i])) {
     $current_in = (float) preg_replace('/[^0-9]/', '', $portInOctets[$i]);
     
-    if ($current_in > 0) {
-        // Prepare statement to get last record
-        $stmt = $conn->prepare("SELECT in_octets, recorded_at FROM port_traffic 
-            WHERE port_index = ? AND switch_id = ? 
-            ORDER BY id DESC LIMIT 1");
-        $stmt->bind_param("si", $index, $switch_id);
-        $stmt->execute();
-        $last_res = $stmt->get_result();
+    // Prepared statement ব্যবহার
+    $stmt = $conn->prepare("SELECT in_octets, recorded_at FROM port_traffic 
+        WHERE port_index = ? AND switch_id = ? 
+        ORDER BY id DESC LIMIT 1");
+    $stmt->bind_param("si", $index, $switch_id);
+    $stmt->execute();
+    $last_res = $stmt->get_result();
+    
+    if ($last_res && $last_res->num_rows > 0) {
+        $last = $last_res->fetch_assoc();
+        $timeDiff = time() - strtotime($last['recorded_at']);
         
-        if ($last_res && $last_res->num_rows > 0) {
-            $last = $last_res->fetch_assoc();
+        if ($timeDiff > 0 && $timeDiff < 3600) {
             $last_octets = (float) $last['in_octets'];
-            $last_time = strtotime($last['recorded_at']);
-            $current_time = time();
-            $time_diff = $current_time - $last_time;
             
-            // Calculate only if time difference is positive and reasonable
-            if ($time_diff > 0 && $time_diff < 300) { // Max 5 minutes gap
-                
-                // Handle counter reset (device reboot or overflow)
-                if ($current_in >= $last_octets) {
-                    $bytes_diff = $current_in - $last_octets;
-                } else {
-                    // Counter reset - use current value as difference
-                    $bytes_diff = $current_in;
-                }
-                
-                // Calculate bits per second
-                $bits_per_sec = ($bytes_diff * 8) / $time_diff;
-                
-                // Convert to Mbps (Megabits per second)
-                $traffic_mbps = round($bits_per_sec / 1000000, 2);
-                $traffic_kbps = round($bits_per_sec / 1000, 2);
-                $traffic_gbps = round($bits_per_sec / 1000000000, 2);
-                
-                // Sanity check - don't show unrealistic values
-                if ($traffic_mbps < 0 || $traffic_mbps > 10000) {
-                    $traffic_mbps = 0.00;
-                    $traffic_kbps = 0.00;
-                    $traffic_gbps = 0.00;
-                }
+            if ($current_in >= $last_octets) {
+                $diff = $current_in - $last_octets;
+            } else {
+                // Counter reset (reboot/overflow)
+                $diff = $current_in;
+            }
+            
+            $calculated_mbps = ($diff * 8) / ($timeDiff * 1000000);
+            $mbps = round($calculated_mbps, 2);
+            
+            if ($mbps < 0 || $mbps > 10000) {
+                $mbps = 0.00;
             }
         }
-        
-        // Store current reading for next poll
+    }
+    
+    // নতুন রেকর্ড INSERT
+    if ($current_in > 0) {
         $insert = $conn->prepare("INSERT INTO port_traffic 
             (switch_id, port_index, in_octets, recorded_at) 
             VALUES (?, ?, ?, NOW())");
         $insert->bind_param("isd", $switch_id, $index, $current_in);
         $insert->execute();
         
-        // Keep only last 2 records per port to save space
+        // Cleanup: শুধু সর্বশেষ ২টি রেকর্ড রাখুন
         $cleanup = $conn->prepare("DELETE FROM port_traffic 
             WHERE switch_id = ? AND port_index = ? 
             AND id NOT IN (
@@ -196,88 +176,6 @@ if (isset($portInOctets[$i])) {
         $cleanup->bind_param("isis", $switch_id, $index, $switch_id, $index);
         $cleanup->execute();
     }
-}
-
-// Format traffic for display
-$traffic_display = "0 Mbps";
-if ($traffic_gbps >= 1) {
-    $traffic_display = $traffic_gbps . " Gbps";
-} elseif ($traffic_mbps >= 1) {
-    $traffic_display = $traffic_mbps . " Mbps";
-} elseif ($traffic_kbps >= 1) {
-    $traffic_display = $traffic_kbps . " Kbps";
-} else {
-    $traffic_display = "0 Mbps";
-}
-
-// Optional: Add color coding based on utilization
-$traffic_class = "text-success"; // Low
-if ($traffic_mbps > 100) {
-    $traffic_class = "text-warning"; // Medium
-}
-if ($traffic_mbps > 500) {
-    $traffic_class = "text-danger"; // High
-}
-if ($traffic_gbps > 1) {
-    $traffic_class = "text-danger font-weight-bold"; // Very High
-}
-
-
-
-
-// Add this function to your fetch_traffic.php
-function calculateDistanceFor1270nm($rx_power_dbm, $tx_power_dbm = null) {
-    // 1270nm specific constants
-    $attenuation_per_km = 0.42;  // dB/km for 1270nm (higher than 1310nm)
-    $connector_loss = 1.0;       // 0.5dB per connector (OLT + ONU)
-    $splice_loss = 0.2;          // 0.1dB per splice (assume 2)
-    $total_fixed_loss = $connector_loss + $splice_loss;
-    
-    // Typical TX power for 1270nm BiDi SFP: +2 to +5 dBm
-    $tx_default = 3.0;
-    
-    if($tx_power_dbm && $tx_power_dbm != 'N/A' && is_numeric($tx_power_dbm)) {
-        $tx_default = (float)$tx_power_dbm;
-    }
-    
-    if($rx_power_dbm == 'N/A' || $rx_power_dbm === null) {
-        return ['distance' => 'No RX Power', 'km' => null, 'loss' => null];
-    }
-    
-    $rx_val = (float)$rx_power_dbm;
-    
-    // Check for fiber cut (no light)
-    if($rx_val < -35) {
-        return ['distance' => 'FIBER_CUT (No Light)', 'km' => null, 'loss' => null];
-    }
-    
-    $total_loss = $tx_default - $rx_val;
-    $fiber_loss = $total_loss - $total_fixed_loss;
-    
-    if($fiber_loss <= 0) {
-        return ['distance' => 'Active', 'km' => 0, 'loss' => round($total_loss, 2)];
-    }
-    
-    $distance_km = round($fiber_loss / $attenuation_per_km, 2);
-    
-    // Sanity check - 10G 1270nm max distance is ~40km
-    if($distance_km > 50) $distance_km = 50;
-    
-    if($distance_km > 0.1) {
-        return ['distance' => "~{$distance_km} km", 'km' => $distance_km, 'loss' => round($total_loss, 2)];
-    } else {
-        return ['distance' => "Very Short ({$distance_km} km)", 'km' => $distance_km, 'loss' => round($total_loss, 2)];
-    }
-}
-
-// Use in your port loop:
-if($sfp_type == '1270nm' || $sfp_type == 'BIDI' || $wavelength == 1270) {
-    $fiberInfo = calculateDistanceFor1270nm($rx_dbm, $tx_dbm);
-    $fiber_distance = $fiberInfo['distance'];
-} else {
-    // Use standard calculation
-    $fiberInfo = calculateStandardDistance($rx_dbm, $tx_dbm);
-    $fiber_distance = $fiberInfo['distance'];
 }
 
 
@@ -313,11 +211,11 @@ if ($vlanData && is_array($vlanData)) {
         }
     }
 }
-	
-	
-	//RX CODE
-	
-	
+
+
+        //RX CODE
+
+
   $rx_dbm = "N/A";
 $rx_raw_value = 0;
 
@@ -377,10 +275,10 @@ if ($rxRaw && is_array($rxRaw)) {
     }
 }
     
-	
-	//TX CODE
-	
-	
+
+        //TX CODE
+
+
   $tx_dbm = "N/A";
 $tx_raw_value = 0;
 
@@ -430,7 +328,7 @@ if ($txRaw && is_array($txRaw)) {
         }
     }
 }
-	
+
 
     
    // ============================================================
@@ -511,9 +409,9 @@ if ($statusCode == 2) { // Port DOWN
     }
 }
     
-	
-	
-	
+
+
+
    // ============================================================
 // DETECT STATUS CHANGE & LOG EVENT - FIXED & ROBUST
 // ============================================================
