@@ -19,6 +19,7 @@ $switch = $res->fetch_assoc();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard | BDCOM Monitor</title>
+	<link rel="icon" type="image/png" sizes="32x32" href="bd.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -67,6 +68,10 @@ $switch = $res->fetch_assoc();
                 <li class="nav-item"><a class="nav-link" href="devices.php"><i class="fas fa-edit me-2"></i> Device Manager</a></li>
                 <li class="nav-item"><a class="nav-link" href="port_config.php"><i class="fas fa-tag me-2"></i> Port Description</a></li>
                 <li class="nav-item"><a class="nav-link" href="event_log.php"><i class="fas fa-history me-2"></i> Event Timeline</a></li>
+			
+         <li class="nav-item">   <a href="settings.php" class="nav-link"><i class="fab fa-telegram me-2"></i> Bot Settings</a></li>
+         <li class="nav-item">   <a href="users.php" class="nav-link"><i class="fas fa-users-cog me-2"></i> User Access</a></li></li>
+          <li class="nav-item">  <a href="support.php" class="nav-link"><i class="fas fa-headset me-2"></i> Support</a></li>
             </ul>
         </div>
 
